@@ -56,13 +56,13 @@ But you can also use the functions `dirent:foreach/2` and `dirent:fold/3`.
 
 For example, to print all files in the folder, one per line, do:
 
-```
+```erlang
 dirent:foreach(".", fun(F) -> io:fwrite("~s~n", [F]), cont end).
 ```
 
 and if you need to collect all files from a folder in a list, do:
 
-```
+```erlang
 dirent:fold(".", fun(F, Tail) -> {cont, [F | Tail]} end, []).
 ```
 
