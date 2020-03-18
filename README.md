@@ -20,7 +20,7 @@ the another to your process, at the moment they are taken from
 
 ## Installation
 
-Download the sources from our [Github repository](http://github.com/team-telnyx/dirent)
+Download the sources from our [Github repository](http://github.com/team-telnyx/erlang-dirent)
 
 To build the application simply run `rebar3 compile`.
 

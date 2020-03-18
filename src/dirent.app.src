@@ -10,7 +10,7 @@
   {modules, []},
 
   {licenses, ["Apache 2.0"]},
-  {links, [{"Github", "https://github.com/team-telnyx/dirent"}]},
+  {links, [{"Github", "https://github.com/team-telnyx/erlang-dirent"}]},
   {files, [
     "src",
     "c_src",
