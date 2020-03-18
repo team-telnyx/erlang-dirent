@@ -1,0 +1,14 @@
+dirent
+-------
+
+2020 (c) Telnyx LLC <software@telnyx.com>
+
+dirent is released under the Apache 2 license. See the LICENSE file for
+the complete license.
+
+
+Third parties
+-------------
+
+*) Some part of the C code from the Erlang/OTP under Apache 2 license:
+   Copyright Ericsson 2017-2020. All Rights Reserved.

@@ -1,0 +1,25 @@
+{application, dirent,
+ [{description, "An iterative directory listing library"},
+  {vsn, "1.0.0"},
+  {registered, [dirent]},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {licenses, ["Apache 2.0"]},
+  {links, [{"Github", "https://github.com/team-telnyx/dirent"}]},
+  {files, [
+    "src",
+    "c_src",
+    "rebar.config",
+    "rebar.lock",
+    "README.md",
+    "LICENSE",
+    "MAINTAINERS",
+    "NOTICE",
+    "MAINTAINERS"
+  ]}
+ ]}.
