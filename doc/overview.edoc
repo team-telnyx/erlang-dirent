@@ -1,0 +1,38 @@
+			-*- html -*-
+
+	dirent
+
+
+
+@author Guilherme Balena Versiani <guilherme@telnyx.com>
+@copyright 2020 Telnyx LLC
+@title Welcome to Dirent
+
+@doc Dirent is an iterative directory listing for Erlang.
+
+== Overview ==
+
+Erlang functions such as `filelib:fold_files/5', `file:list_dir/1', `c:ls/0,1',
+etc return files from directories <em>after</em> reading them from the filesystem.
+When you have an humongous number of files on a single folder, all these
+functions will block for a certain time.
+
+In these cases you may not be interested in returning the full list of files,
+but instead you may want to list them <em>iteratively</em>, returning each entry after
+the another to your process, at the moment they are taken from
+<a href="http://man7.org/linux/man-pages/man3/readdir.3.html"><code>readdir</code></a>.
+
+== Installation ==
+
+Download the sources from our <a href="http://github.com/team-telnyx/erlang-dirent">Github repository</a>]
+
+To build the application simply run `rebar3 compile'.
+
+Or add it to your rebar config add:
+
+```
+{deps, [
+    ....
+    {dirent, ".*", {git, "git://github.com/team-telnyx/dirent.git", {branch, "master"}}}
+]}.
+'''

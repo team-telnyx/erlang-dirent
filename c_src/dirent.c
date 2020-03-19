@@ -12,16 +12,14 @@ extern char* erl_errno_id(int error);
 static ERL_NIF_TERM am_ok;
 static ERL_NIF_TERM am_error;
 static ERL_NIF_TERM am_finished;
-static ERL_NIF_TERM am_not_on_controlling_process;
+static ERL_NIF_TERM am_not_owner;
 
-static ERL_NIF_TERM am_blk;
-static ERL_NIF_TERM am_chr;
-static ERL_NIF_TERM am_dir;
-static ERL_NIF_TERM am_fifo;
-static ERL_NIF_TERM am_lnk;
-static ERL_NIF_TERM am_reg;
-static ERL_NIF_TERM am_sock;
-static ERL_NIF_TERM am_unk;
+static ERL_NIF_TERM am_device;
+static ERL_NIF_TERM am_directory;
+static ERL_NIF_TERM am_other;
+static ERL_NIF_TERM am_regular;
+static ERL_NIF_TERM am_symlink;
+static ERL_NIF_TERM am_undefined;
 
 typedef struct {
   DIR *dir_stream;
@@ -40,17 +38,14 @@ static int load(ErlNifEnv *env, void** priv_data, ERL_NIF_TERM load_info) {
   am_ok = enif_make_atom(env, "ok");
   am_error = enif_make_atom(env, "error");
   am_finished = enif_make_atom(env, "finished");
-  am_not_on_controlling_process =
-      enif_make_atom(env, "not_on_controlling_process");
+  am_not_owner = enif_make_atom(env, "not_owner");
 
-  am_blk = enif_make_atom(env, "blk");
-  am_chr = enif_make_atom(env, "chr");
-  am_dir = enif_make_atom(env, "dir");
-  am_fifo = enif_make_atom(env, "fifo");
-  am_lnk = enif_make_atom(env, "lnk");
-  am_reg = enif_make_atom(env, "reg");
-  am_sock = enif_make_atom(env, "sock");
-  am_unk = enif_make_atom(env, "unk");
+  am_device = enif_make_atom(env, "device");
+  am_directory = enif_make_atom(env, "directory");
+  am_symlink = enif_make_atom(env, "symlink");
+  am_regular = enif_make_atom(env, "regular");
+  am_other = enif_make_atom(env, "other");
+  am_undefined = enif_make_atom(env, "undefined");
 
   rtype_dir = enif_open_resource_type(env, NULL, "gc_dir", gc_dir, ERL_NIF_RT_CREATE, NULL);
 
@@ -168,15 +163,21 @@ static int is_ignored_name(int name_length, const char *name) {
 
 static ERL_NIF_TERM dtype2atom(unsigned char d_type) {
   switch (d_type) {
-    case DT_BLK: return am_blk;
-    case DT_CHR: return am_chr;
-    case DT_DIR: return am_dir;
-    case DT_FIFO: return am_fifo;
-    case DT_LNK: return am_lnk;
-    case DT_REG: return am_reg;
-    case DT_SOCK: return am_sock;
+    case DT_REG:
+      return am_regular;
+    case DT_DIR:
+      return am_directory;
+    case DT_LNK:
+      return am_symlink;
+    case DT_BLK:
+    case DT_CHR:
+      return am_device;
+    case DT_FIFO:
+    case DT_SOCK:
+      return am_other;
   }
-  return am_unk;
+
+  return am_undefined;
 }
 
 static int read_boolean(ErlNifEnv *env, ERL_NIF_TERM term, int *var) {
@@ -208,7 +209,7 @@ static ERL_NIF_TERM read_dir(ErlNifEnv *env, int argc,
   } else if (!read_boolean(env, argv[1], &return_dtype)) {
     return enif_make_badarg(env);
   } else if (!process_check(env, d)) {
-    return enif_raise_exception(env, am_not_on_controlling_process);
+    return enif_make_tuple2(env, am_error, am_not_owner);
   }
 
   while ((dir_entry = readdir(d->dir_stream)) != NULL) {
@@ -248,7 +249,7 @@ static ERL_NIF_TERM set_controller(ErlNifEnv *env, int argc, const ERL_NIF_TERM 
   } else if (!enif_get_local_pid(env, argv[1], &new_owner)) {
     return enif_make_badarg(env);
   } else if(!process_check(env, d)) {
-    return enif_raise_exception(env, am_not_on_controlling_process);
+    return enif_make_tuple2(env, am_error, am_not_owner);
   }
 
   enif_mutex_lock(d->controller_lock);

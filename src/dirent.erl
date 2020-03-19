@@ -1,7 +1,7 @@
 -module(dirent).
 
--export([opendir/1, readdir/1, readdir/2, readdir/3, set_controlling_process/2,
-         foreach/2, foreach/3, foreach/4, fold/3, fold/4, fold/5]).
+-export([opendir/1, readdir/1, readdir_type/1, readdir_all/1, readdir_raw/1,
+         controlling_process/2]).
 -on_load(init/0).
 
 -export_type([dirent/0]).
@@ -10,68 +10,101 @@
 -define(LIBNAME, dirent).
 
 %% Public data types.
--type dirent() :: reference().
--type filename() :: file:name().
--type dirname() :: filename().
--type dtype() :: blk | chr | dir | fifo | lnk | reg | sock | unk.
 
-encode_path(Path) ->
-  prim_file:internal_name2native(Path).
-decode_path(NativePath) when is_binary(NativePath) ->
-  prim_file:internal_native2name(NativePath).
+-type dirent() :: reference(). %% Directory reference.
 
--spec opendir(Path) -> DirRef when
+-type filename() :: file:name(). %% File name.
+
+-type dirname() :: filename(). %% Directory name.
+
+%% @type dtype(). Indicates the file type.
+%%
+%% <dl>
+%%  <dt>`device'</dt>
+%%    <dd>This is a block or character device.</dd>
+%%  <dt>`directory'</dt>
+%%    <dd>This is a directory.</dd>
+%%  <dt>`symlink'</dt>
+%%    <dd>This is a symbolic link.</dd>
+%%  <dt>`regular'</dt>
+%%    <dd>This is a regular file.</dd>
+%%  <dt>`other'</dt>
+%%    <dd>This is a UNIX domain socket or named pipe (FIFO).</dd>
+%%  <dt>`undefined'</dt>
+%%    <dd>The file type could not be determined.</dd>
+%% </dl>
+-type dtype() :: device | directory | symlink | regular | other | undefined.
+
+%% @type posix_error(). Common POSIX errors:
+%%
+%% <dl>
+%%   <dt>`enoent'</dt>
+%%     <dd>Directory does not exist, or `Path' is an empty string.</dd>
+%%   <dt>`eacces'</dt>
+%%     <dd>Permission denied.</dd>
+%%   <dt>`emfile'</dt>
+%%     <dd>The per-process limit on the number of open file descriptors has
+%%         been reached.</dd>
+%%   <dt>`enfile'</dt>
+%%     <dd>The system-wide limit on the total number of open files has been
+%%         reached.</dd>
+%%   <dt>`enomem'</dt>
+%%     <dd>Insufficient memory to complete the operation.</dd>
+%%   <dt>`enotdir'</dt>
+%%     <dd>`Path' is not a directory.</dd>
+%% </dl>
+-type posix_error() :: enoent | eacces | emfile | enfile | enomem | enotdir | atom().
+
+% Public functions
+
+%% @doc Opens the given `Path'. Returns `{ok, DirRef}' if successful, otherwise
+%% `{error, Reason}'.
+-spec opendir(Path) -> DirRef | {error, Reason} when
       Path :: dirname(),
-      DirRef :: dirent().
+      DirRef :: dirent(),
+      Reason :: posix_error().
 opendir(Path) ->
   try opendir_nif(encode_path(Path)) of
-    {ok, Dir} -> {ok, Dir};
+    {ok, DirRef} -> {ok, DirRef};
     {error, Reason} -> {error, Reason}
   catch
     error:badarg -> {error, badarg}
   end.
-opendir_nif(_Path) ->
-  not_loaded(?LINE).
 
--spec readdir(Dir) -> filename() | finished when
-      Dir :: dirname().
-readdir(Dir) ->
-  readdir(Dir, false, true).
-
--spec readdir(Dir, ReturnDtype) -> filename() | finished when
-      Dir :: dirname(),
-      ReturnDtype :: boolean().
-readdir(Dir, ReturnDtype) ->
-  readdir(Dir, ReturnDtype, true).
-
--spec readdir(Dir, ReturnDtype, SkipInvalid) -> filename() | finished when
-      Dir :: dirname(),
-      SkipInvalid :: boolean(),
-      ReturnDtype :: boolean().
-readdir(Dir, ReturnDtype, SkipInvalid) ->
-  try case readdir_nif(Dir, ReturnDtype) of
+%% @doc Lists all files in `DirRef', <strong>except</strong> files with raw
+%% names. Returns `F' while iterating over the directory or `finished' when
+%% done.
+%%
+%% If the filename is a `binary()' with characters coded in ISO Latin-1 and the
+%% VM was started with parameter `+fnue', the function returns
+%% `{error, {no_translation, RawName}}'.
+%%
+%% If called by any other process than the current controlling process,
+%% `{error, not_owner}' is returned.
+%%
+%% The names are not sorted.
+-spec readdir(DirRef) -> F | finished | {error, Reason} when
+      DirRef :: dirent(),
+      F :: filename(),
+      Reason :: {no_translation, RawName} | not_owner,
+      RawName :: binary().
+readdir(DirRef) ->
+  try case readdir_nif(DirRef, false) of
     finished -> finished;
-    {RawName, Dtype} ->
-      case readdir_name(RawName, SkipInvalid) of
-        skip -> readdir(Dir, SkipInvalid, ReturnDtype);
-        {error, Reason} -> {error, Reason};
-        Name -> {Name, Dtype}
-      end;
+    {error, Reason} -> {error, Reason};
     RawName ->
-      case readdir_name(RawName, SkipInvalid) of
-        skip -> readdir(Dir, SkipInvalid, ReturnDtype);
+      case readdir_skip(RawName) of
+        skip -> readdir(DirRef);
         {error, Reason} -> {error, Reason};
-        Name -> Name
+        F -> F
       end
   end catch error:badarg ->
     {error, badarg}
   end.
-readdir_name(RawName, SkipInvalid) ->
+readdir_skip(RawName) ->
   case decode_path(RawName) of
     Converted when is_list(Converted) ->
       Converted;
-    {error, _} when SkipInvalid =:= false ->
-      RawName;
 
     %% If the filename cannot be converted, return error or ignore with
     %% optional error logger warning depending on +fn{u|a}{i|e|w} emulator
@@ -91,94 +124,132 @@ readdir_name(RawName, SkipInvalid) ->
     {error, _} ->
       {error, {no_translation, RawName}}
   end.
-readdir_nif(_Dir, _ReturnDtype) ->
-  not_loaded(?LINE).
 
--spec set_controlling_process(Dir, Pid) -> 'ok' when
-      Dir :: dirent(),
+%% @doc Lists all files in `DirRef', <strong>except</strong> files with raw
+%% names, returning also the file type.
+%%
+%% Returns `{F, Dtype}' or `finished' when done. `Dtype' can be used to
+%% avoid making a second call to `file:read_file_info/1,2' if the filesystem
+%% has support to it in the system `readdir'. If the filesystem does not have
+%% support, `Dtype' will be always `undefined'.
+%%
+%% If the filename is a `binary()' with characters coded in ISO Latin-1 and the
+%% VM was started with parameter `+fnue', the function returns
+%% `{error, {no_translation, RawName}}'.
+%%
+%% If called by any other process than the current controlling process,
+%% `{error, not_owner}' is returned.
+%%
+%% The names are not sorted.
+-spec readdir_type(DirRef) -> {F, Dtype} | finished | {error, Reason} when
+      DirRef :: dirent(),
+      F :: filename(),
+      Dtype :: dtype(),
+      Reason :: {no_translation, RawName} | not_owner,
+      RawName :: binary().
+readdir_type(DirRef) ->
+  try case readdir_nif(DirRef, true) of
+    finished -> finished;
+    {error, Reason} -> {error, Reason};
+    {RawName, Dtype} ->
+      case readdir_skip(RawName) of
+        skip -> readdir_type(DirRef);
+        {error, Reason} -> {error, Reason};
+        F -> {F, Dtype}
+      end
+  end catch error:badarg ->
+    {error, badarg}
+  end.
+
+%% @doc Lists all files in `DirRef', including files with raw names, returning
+%% also the file type.
+%%
+%% Returns `{F, Dtype}' or `finished' when done. `Dtype' can be used to avoid
+%% making a second call to `file:read_file_info/1,2' if the filesystem has
+%% support to it in the system `readdir'. If the filesystem does not have
+%% support, `Dtype' will be always `undefined'.
+%%
+%% If Unicode filename translation is in effect and the file system is
+%% transparent, filenames that cannot be interpreted as Unicode can be
+%% encountered, in which case `F' will represent a raw filename (that is,
+%% binary).
+%%
+%% If called by any other process than the current controlling process,
+%% `{error, not_owner}' is returned.
+%%
+%% The names are not sorted.
+-spec readdir_all(DirRef) -> {F, Dtype} | finished | {error, Reason} when
+      DirRef :: dirent(),
+      F :: filename() | binary(),
+      Dtype :: dtype(),
+      Reason :: not_owner.
+readdir_all(DirRef) ->
+  try case readdir_nif(DirRef, true) of
+    finished -> finished;
+    {error, Reason} -> {error, Reason};
+    {RawName, Dtype} ->
+      case decode_path(RawName) of
+        Converted when is_list(Converted) ->
+          {Converted, Dtype};
+        {error, _} ->
+          {RawName, Dtype}
+      end
+  end catch error:badarg ->
+    {error, badarg}
+  end.
+
+%% @doc Lists raw filenames in `DirRef', returning also the file type.
+%%
+%% No Unicode translation is made on the filename, and it is returned in raw
+%% format (binary).
+%%
+%% Returns `{F, Dtype}' or `finished' when done. `Dtype' can be used to avoid
+%% making a second call to `file:read_file_info/1,2' if the filesystem has
+%% support to it in the system `readdir'. If the filesystem does not have
+%% support, `Dtype' will be always `undefined'.
+%%
+%% The names are not sorted.
+-spec readdir_raw(DirRef) -> {F, Dtype} | finished | {error, Reason} when
+      DirRef :: dirent(),
+      F :: filename() | binary(),
+      Dtype :: dtype(),
+      Reason :: not_owner.
+readdir_raw(DirRef) ->
+  try case readdir_nif(DirRef, true) of
+    finished -> finished;
+    {error, Reason} -> {error, Reason};
+    {RawName, Dtype} -> {RawName, Dtype}
+  end catch error:badarg ->
+    {error, badarg}
+  end.
+
+%% @doc Set controlling affinity.
+%% 
+%% Once created, `DirRef' is associated to the calling process and reading
+%% functions should be executed by the same process. If passing to another
+%% process is required, then this function should be called from the process
+%% owner, delegating control to another process indicated by `Pid'.
+-spec controlling_process(DirRef, Pid) -> 'ok' when
+      DirRef :: dirent(),
       Pid :: pid().
-set_controlling_process(Dir, Pid) ->
-  set_controller_nif(Dir, Pid).
-set_controller_nif(_Dir, _Pid) ->
+controlling_process(DirRef, Pid) ->
+  set_controller_nif(DirRef, Pid).
+
+% Private functions
+
+encode_path(Path) ->
+  prim_file:internal_name2native(Path).
+decode_path(NativePath) when is_binary(NativePath) ->
+  prim_file:internal_native2name(NativePath).
+
+% NIF loading
+
+set_controller_nif(_DirRef, _Pid) ->
   not_loaded(?LINE).
-
--spec foreach(Path, Fun) -> ok | {error, Reason} when
-      Path :: dirname(),
-      Fun :: fun((F :: filename()) -> cont | halt),
-      Reason :: term().
-foreach(Path, Fun) ->
-  foreach(Path, false, true, Fun).
-
--spec foreach(Path, ReturnDtype, Fun) -> ok | {error, Reason} when
-      Path :: dirname(),
-      ReturnDtype :: boolean(),
-      Fun :: fun((filename() | {filename(), dtype()}) -> cont | halt),
-      Reason :: term().
-foreach(Path, ReturnDtype, Fun) ->
-  foreach(Path, ReturnDtype, true, Fun).
-
--spec foreach(Path, ReturnDtype, SkipInvalid, Fun) -> ok | {error, Reason} when
-      Path :: dirname(),
-      ReturnDtype :: boolean(),
-      SkipInvalid :: boolean(),
-      Fun :: fun((filename() | {filename(), dtype()}) -> cont | halt),
-      Reason :: term().
-foreach(Path, ReturnDtype, SkipInvalid, Fun) ->
-  case opendir(Path) of
-    {ok, Dir} -> foreach_1(Dir, ReturnDtype, SkipInvalid, Fun);
-    Error -> Error
-  end.
-foreach_1(Dir, ReturnDtype, SkipInvalid, Fun) ->
-  case readdir(Dir, ReturnDtype, SkipInvalid) of
-    finished -> ok;
-    Result ->
-      case Fun(Result) of
-        halt -> ok;
-        cont -> foreach_1(Dir, ReturnDtype, SkipInvalid, Fun)
-      end
-  end.
-
--spec fold(Path, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
-      Path :: dirname(),
-      Fun :: fun((F :: filename()) -> {cont, AccOut} | {halt, AccOut}),
-      AccIn :: term(),
-      AccOut :: term(),
-      Reason :: term().
-fold(Path, Fun, AccIn) ->
-  fold(Path, false, true, Fun, AccIn).
-
--spec fold(Path, ReturnDtype, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
-      Path :: dirname(),
-      ReturnDtype :: boolean(),
-      Fun :: fun((F :: filename()) -> {cont, AccOut} | {halt, AccOut}),
-      AccIn :: term(),
-      AccOut :: term(),
-      Reason :: term().
-fold(Path, ReturnDtype, Fun, AccIn) ->
-  fold(Path, ReturnDtype, true, Fun, AccIn).
-
--spec fold(Path, ReturnDtype, SkipInvalid, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
-      Path :: dirname(),
-      ReturnDtype :: boolean(),
-      SkipInvalid :: boolean(),
-      Fun :: fun((F :: filename()) -> {cont, AccOut} | {halt, AccOut}),
-      AccIn :: term(),
-      AccOut :: term(),
-      Reason :: term().
-fold(Path, ReturnDtype, SkipInvalid, Fun, AccIn) ->
-  case opendir(Path) of
-    {ok, Dir} -> fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccIn);
-    Error -> Error
-  end.
-fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccIn) ->
-  case readdir(Dir, ReturnDtype, SkipInvalid) of
-    finished -> {ok, AccIn};
-    File ->
-      case Fun(File, AccIn) of
-        {halt, AccOut0} -> {ok, AccOut0};
-        {cont, AccOut1} -> fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccOut1)
-      end
-  end.
+opendir_nif(_Path) ->
+  not_loaded(?LINE).
+readdir_nif(_DirRef, _ReturnDtype) ->
+  not_loaded(?LINE).
 
 init() ->
   SoName = case code:priv_dir(?APPNAME) of

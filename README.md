@@ -39,37 +39,69 @@ Or add it to your rebar config add:
 The most basic usage of `dirent` is:
 
 ```erlang
-> {ok, Dir} = dirent:opendir(".").
+> {ok, DirRef} = dirent:opendir(".").
 {ok,#Ref<0.1857889054.1430650882.66300>}
-> dirent:readdir(Dir).
-"LICENSE"
-> dirent:readdir(Dir).
-"README.md"
-> dirent:readdir(Dir).
-"rebar.config"
-...
-> dirent:readdir(Dir).
-finished
+> PrintDir = fun F(DirRef) ->
+>   case dirent:readdir(DirRef) of
+>     finished -> ok;
+>     {error, Reason} -> {error, Reason};
+>     File -> io:format("~s~n", [File]), F(DirRef)
+>   end
+> end.
+#Fun<erl_eval.31.126501267>
+> PrintDir(DirRef).
+./LICENSE
+./MAINTAINERS
+./NOTICE
+./README.md
+./priv
+./.gitignore
+./c_src
+./doc
+./rebar.config
+./src
+ok
 ```
 
-But you can also use the functions `dirent:foreach/2` and `dirent:fold/3`.
-
-For example, to print all files in the folder, one per line, do:
+In the example above the function `dirent:readdir/1` was used. But you can also
+use `dirent:readdir_type/1` and take the advantage that some well known
+filesystems has the capability to return the file type:
 
 ```erlang
-dirent:foreach(".", fun(F) -> io:fwrite("~s~n", [F]), cont end).
+recurse_dir(Dir) ->
+  {ok, DirRef} = dirent:opendir(Dir),
+  list_files(DirRef).
+
+list_files(DirRef) ->
+  case dirent:readdir_type(DirRef) of
+    finished -> ok;
+    {error, Reason} ->
+      {error, Reason};
+    {Dir, directory} ->
+      recurse_dir(Dir),
+      list_files(DirRef);
+    {File, _type} ->
+      io:format("~s~n", [File]),
+      list_files(DirRef)
+  end.
 ```
 
-and if you need to collect all files from a folder in a list, do:
+In the example above, there is no need to make a second call to
+`file:read_file_info/1,2` which might add considerable overhead when you have
+too many files to list.
 
-```erlang
-dirent:fold(".", fun(F, Tail) -> {cont, [F | Tail]} end, []).
-```
+If invalid unicode characters are found in the file names and the filesystem
+doesn't handle that correctly, they will be skipped or `{error,
+{no_translation, RawName}}` will be returned.  That's the same behavior of
+Erlang's `file:list_dir/1`, and the behavior depends on the `+fn{u|a}{i|e|w}`
+emulator switches.
 
-The `dirent:foreach/2` function `Fun` can return `cont` or `halt`. In the
-former case, the loop will continue reading files, while in the latter case the
-loop will halt and the function will return `ok`.
+For even more advanced usage, there is also `dirent:readdir_all/1` and
+`dirent:readdir_raw/1`. The main different of these latter functions is with
+regards to invalid filenames.
 
-The `dirent:fold/3` function `Fun` can return `{cont, AccOut}` or `{halt,
-AccOut}`, likewise the above, but also returning the accumulator, which is
-passed to the `{ok, AccOut}` return value.
+`dirent:readdir_all/1` will attempt to translate the filename to a charlist,
+but if not possible, the raw binary will be returned.
+
+`dirent:readdir_raw/1` will not even attempt to translate the filename, the raw
+binary representation is always returned.
