@@ -38,7 +38,7 @@ Or add it to your rebar config add:
 
 The most basic usage of `dirent` is:
 
-```erlang
+```
 > {ok, DirRef} = dirent:opendir(".").
 {ok,#Ref<0.1857889054.1430650882.66300>}
 > PrintDir = fun F(DirRef) ->
