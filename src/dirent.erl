@@ -96,17 +96,16 @@ foreach(Path, Fun) ->
       Reason :: term().
 foreach(Path, SkipInvalid, Fun) ->
   case opendir(Path) of
-    {ok, Dir} -> foreach_1(Dir, SkipInvalid, Path, Fun);
+    {ok, Dir} -> foreach_1(Dir, SkipInvalid, Fun);
     Error -> Error
   end.
-foreach_1(Dir, SkipInvalid, Path, Fun) ->
+foreach_1(Dir, SkipInvalid, Fun) ->
   case readdir(Dir, SkipInvalid) of
     finished -> ok;
     File ->
-      FullName = filename:join(Path, File),
-      case Fun(FullName) of
+      case Fun(File) of
         halt -> ok;
-        cont -> foreach_1(Dir, SkipInvalid, Path, Fun)
+        cont -> foreach_1(Dir, SkipInvalid, Fun)
       end
   end.
 
@@ -128,17 +127,16 @@ fold(Path, Fun, AccIn) ->
       Reason :: term().
 fold(Path, SkipInvalid, Fun, AccIn) ->
   case opendir(Path) of
-    {ok, Dir} -> fold_1(Dir, SkipInvalid, Path, Fun, AccIn);
+    {ok, Dir} -> fold_1(Dir, SkipInvalid, Fun, AccIn);
     Error -> Error
   end.
-fold_1(Dir, SkipInvalid, Path, Fun, AccIn) ->
+fold_1(Dir, SkipInvalid, Fun, AccIn) ->
   case readdir(Dir, SkipInvalid) of
     finished -> {ok, AccIn};
     File ->
-      FullName = filename:join(Path, File),
-      case Fun(FullName, AccIn) of
+      case Fun(File, AccIn) of
         {halt, AccOut0} -> {ok, AccOut0};
-        {cont, AccOut1} -> fold_1(Dir, SkipInvalid, Path, Fun, AccOut1)
+        {cont, AccOut1} -> fold_1(Dir, SkipInvalid, Fun, AccOut1)
       end
   end.
 

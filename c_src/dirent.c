@@ -17,6 +17,7 @@ static ERL_NIF_TERM am_not_on_controlling_process;
 typedef struct {
   DIR *dir_stream;
   char *path;
+  size_t path_length;
  
   ErlNifPid controlling_process;
   ErlNifMutex *controller_lock;
@@ -116,6 +117,7 @@ static ERL_NIF_TERM open_dir(ErlNifEnv *env, int argc,
   }
 
   memcpy(d->path, path.data, path.size);
+  d->path_length = path.size - 1;
 
   d->dir_stream = opendir(d->path);
   if (d->dir_stream == NULL) {
@@ -165,9 +167,13 @@ static ERL_NIF_TERM read_dir(ErlNifEnv *env, int argc,
     if (!is_ignored_name(name_length, dir_entry->d_name)) {
       unsigned char *name_bytes;
       ERL_NIF_TERM name_term;
- 
-      name_bytes = enif_make_new_binary(env, name_length, &name_term);
-      memcpy(name_bytes, dir_entry->d_name, name_length);
+
+      size_t fullpath_length = d->path_length + 1 + name_length;
+      name_bytes = enif_make_new_binary(env, fullpath_length, &name_term);
+
+      memcpy(name_bytes, d->path, d->path_length);
+      name_bytes[d->path_length] = '/';
+      memcpy(name_bytes + d->path_length + 1, dir_entry->d_name, name_length);
  
       return name_term;
     }
