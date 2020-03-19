@@ -1,6 +1,6 @@
 {application, dirent,
  [{description, "An iterative directory listing library"},
-  {vsn, "1.0.1"},
+  {vsn, "1.0.2"},
   {registered, [dirent]},
   {applications,
    [kernel,
