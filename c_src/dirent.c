@@ -14,11 +14,20 @@ static ERL_NIF_TERM am_error;
 static ERL_NIF_TERM am_finished;
 static ERL_NIF_TERM am_not_on_controlling_process;
 
+static ERL_NIF_TERM am_blk;
+static ERL_NIF_TERM am_chr;
+static ERL_NIF_TERM am_dir;
+static ERL_NIF_TERM am_fifo;
+static ERL_NIF_TERM am_lnk;
+static ERL_NIF_TERM am_reg;
+static ERL_NIF_TERM am_sock;
+static ERL_NIF_TERM am_unk;
+
 typedef struct {
   DIR *dir_stream;
   char *path;
   size_t path_length;
- 
+
   ErlNifPid controlling_process;
   ErlNifMutex *controller_lock;
 } dir_context_t;
@@ -33,6 +42,15 @@ static int load(ErlNifEnv *env, void** priv_data, ERL_NIF_TERM load_info) {
   am_finished = enif_make_atom(env, "finished");
   am_not_on_controlling_process =
       enif_make_atom(env, "not_on_controlling_process");
+
+  am_blk = enif_make_atom(env, "blk");
+  am_chr = enif_make_atom(env, "chr");
+  am_dir = enif_make_atom(env, "dir");
+  am_fifo = enif_make_atom(env, "fifo");
+  am_lnk = enif_make_atom(env, "lnk");
+  am_reg = enif_make_atom(env, "reg");
+  am_sock = enif_make_atom(env, "sock");
+  am_unk = enif_make_atom(env, "unk");
 
   rtype_dir = enif_open_resource_type(env, NULL, "gc_dir", gc_dir, ERL_NIF_RT_CREATE, NULL);
 
@@ -148,16 +166,48 @@ static int is_ignored_name(int name_length, const char *name) {
   return 0;
 }
 
+static ERL_NIF_TERM dtype2atom(unsigned char d_type) {
+  switch (d_type) {
+    case DT_BLK: return am_blk;
+    case DT_CHR: return am_chr;
+    case DT_DIR: return am_dir;
+    case DT_FIFO: return am_fifo;
+    case DT_LNK: return am_lnk;
+    case DT_REG: return am_reg;
+    case DT_SOCK: return am_sock;
+  }
+  return am_unk;
+}
+
+static int read_boolean(ErlNifEnv *env, ERL_NIF_TERM term, int *var) {
+  char buf[6]; // max( len("true"), len("false")) + 1
+
+  if (!enif_get_atom(env, term, buf, sizeof(buf), ERL_NIF_LATIN1)) {
+    return 0;
+  } else if (strcmp(buf, "true") == 0) {
+    *var = 1;
+    return 1;
+  } else if (strcmp(buf, "false") == 0) {
+    *var = 0;
+    return 1;
+  }
+
+  return 0; // some other atom, return error
+}
+
 static ERL_NIF_TERM read_dir(ErlNifEnv *env, int argc,
     const ERL_NIF_TERM argv[]) {
   struct dirent *dir_entry;
   dir_context_t *d;
+  int return_dtype = 0;
 
-  if (argc != 1) {
+  if (argc != 2) {
     return enif_make_badarg(env);
   } else if (!enif_get_resource(env, argv[0], (ErlNifResourceType*)rtype_dir, (void**)&d)) {
     return enif_make_badarg(env);
-  } else if(!process_check(env, d)) {
+  } else if (!read_boolean(env, argv[1], &return_dtype)) {
+    return enif_make_badarg(env);
+  } else if (!process_check(env, d)) {
     return enif_raise_exception(env, am_not_on_controlling_process);
   }
 
@@ -174,8 +224,12 @@ static ERL_NIF_TERM read_dir(ErlNifEnv *env, int argc,
       memcpy(name_bytes, d->path, d->path_length);
       name_bytes[d->path_length] = '/';
       memcpy(name_bytes + d->path_length + 1, dir_entry->d_name, name_length);
- 
-      return name_term;
+
+      if (return_dtype) {
+        return enif_make_tuple2(env, name_term, dtype2atom(dir_entry->d_type));
+      } else {
+        return name_term;
+      }
     }
   }
 
@@ -208,7 +262,7 @@ static ERL_NIF_TERM set_controller(ErlNifEnv *env, int argc, const ERL_NIF_TERM 
 
 static ErlNifFunc nif_funcs[] = {
   {"opendir_nif", 1, open_dir},
-  {"readdir_nif", 1, read_dir},
+  {"readdir_nif", 2, read_dir},
   {"set_controller_nif", 2, set_controller},
 };
 

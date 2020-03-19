@@ -1,7 +1,7 @@
 -module(dirent).
 
--export([opendir/1, readdir/1, readdir/2, set_controlling_process/2,
-         foreach/2, foreach/3, fold/3, fold/4]).
+-export([opendir/1, readdir/1, readdir/2, readdir/3, set_controlling_process/2,
+         foreach/2, foreach/3, foreach/4, fold/3, fold/4, fold/5]).
 -on_load(init/0).
 
 -export_type([dirent/0]).
@@ -13,6 +13,7 @@
 -type dirent() :: reference().
 -type filename() :: file:name().
 -type dirname() :: filename().
+-type dtype() :: blk | chr | dir | fifo | lnk | reg | sock | unk.
 
 encode_path(Path) ->
   prim_file:internal_name2native(Path).
@@ -35,43 +36,62 @@ opendir_nif(_Path) ->
 -spec readdir(Dir) -> filename() | finished when
       Dir :: dirname().
 readdir(Dir) ->
-  readdir(Dir, true).
+  readdir(Dir, false, true).
 
--spec readdir(Dir, SkipInvalid) -> filename() | finished when
+-spec readdir(Dir, ReturnDtype) -> filename() | finished when
       Dir :: dirname(),
-      SkipInvalid :: boolean().
-readdir(Dir, SkipInvalid) ->
-  try case readdir_nif(Dir) of
-    finished -> finished;
-    RawName ->
-      case decode_path(RawName) of
-        Converted when is_list(Converted) ->
-          Converted;
-        {error, _} when SkipInvalid =:= false ->
-          RawName;
+      ReturnDtype :: boolean().
+readdir(Dir, ReturnDtype) ->
+  readdir(Dir, ReturnDtype, true).
 
-        %% If the filename cannot be converted, return error or ignore with
-        %% optional error logger warning depending on +fn{u|a}{i|e|w} emulator
-        %% switches.
-        {error, ignore} ->
-          readdir(Dir, SkipInvalid);
-        {error, warning} ->
-          %% This is equal to calling logger:warning/3 which
-          %% we don't want to do from code_server during system boot.
-          %% We don't want to call logger:timestamp() either.
-          catch logger ! {log,warning,"Non-unicode filename ~p ignored\n", [RawName],
-                        #{pid=>self(),
-                          gl=>group_leader(),
-                          time=>os:system_time(microsecond),
-                          error_logger=>#{tag=>warning_msg}}},
-          readdir(Dir, SkipInvalid);
-        {error, _} ->
-          {error, {no_translation, RawName}}
+-spec readdir(Dir, ReturnDtype, SkipInvalid) -> filename() | finished when
+      Dir :: dirname(),
+      SkipInvalid :: boolean(),
+      ReturnDtype :: boolean().
+readdir(Dir, ReturnDtype, SkipInvalid) ->
+  try case readdir_nif(Dir, ReturnDtype) of
+    finished -> finished;
+    {RawName, Dtype} ->
+      case readdir_name(RawName, SkipInvalid) of
+        skip -> readdir(Dir, SkipInvalid, ReturnDtype);
+        {error, Reason} -> {error, Reason};
+        Name -> {Name, Dtype}
+      end;
+    RawName ->
+      case readdir_name(RawName, SkipInvalid) of
+        skip -> readdir(Dir, SkipInvalid, ReturnDtype);
+        {error, Reason} -> {error, Reason};
+        Name -> Name
       end
   end catch error:badarg ->
     {error, badarg}
   end.
-readdir_nif(_Dir) ->
+readdir_name(RawName, SkipInvalid) ->
+  case decode_path(RawName) of
+    Converted when is_list(Converted) ->
+      Converted;
+    {error, _} when SkipInvalid =:= false ->
+      RawName;
+
+    %% If the filename cannot be converted, return error or ignore with
+    %% optional error logger warning depending on +fn{u|a}{i|e|w} emulator
+    %% switches.
+    {error, ignore} ->
+      skip;
+    {error, warning} ->
+      %% This is equal to calling logger:warning/3 which
+      %% we don't want to do from code_server during system boot.
+      %% We don't want to call logger:timestamp() either.
+      catch logger ! {log,warning,"Non-unicode filename ~p ignored\n", [RawName],
+                    #{pid=>self(),
+                      gl=>group_leader(),
+                      time=>os:system_time(microsecond),
+                      error_logger=>#{tag=>warning_msg}}},
+      skip;
+    {error, _} ->
+      {error, {no_translation, RawName}}
+  end.
+readdir_nif(_Dir, _ReturnDtype) ->
   not_loaded(?LINE).
 
 -spec set_controlling_process(Dir, Pid) -> 'ok' when
@@ -87,25 +107,34 @@ set_controller_nif(_Dir, _Pid) ->
       Fun :: fun((F :: filename()) -> cont | halt),
       Reason :: term().
 foreach(Path, Fun) ->
-  foreach(Path, true, Fun).
+  foreach(Path, false, true, Fun).
 
--spec foreach(Path, SkipInvalid, Fun) -> ok | {error, Reason} when
+-spec foreach(Path, ReturnDtype, Fun) -> ok | {error, Reason} when
       Path :: dirname(),
-      SkipInvalid :: boolean(),
-      Fun :: fun((F :: filename()) -> cont | halt),
+      ReturnDtype :: boolean(),
+      Fun :: fun((filename() | {filename(), dtype()}) -> cont | halt),
       Reason :: term().
-foreach(Path, SkipInvalid, Fun) ->
+foreach(Path, ReturnDtype, Fun) ->
+  foreach(Path, ReturnDtype, true, Fun).
+
+-spec foreach(Path, ReturnDtype, SkipInvalid, Fun) -> ok | {error, Reason} when
+      Path :: dirname(),
+      ReturnDtype :: boolean(),
+      SkipInvalid :: boolean(),
+      Fun :: fun((filename() | {filename(), dtype()}) -> cont | halt),
+      Reason :: term().
+foreach(Path, ReturnDtype, SkipInvalid, Fun) ->
   case opendir(Path) of
-    {ok, Dir} -> foreach_1(Dir, SkipInvalid, Fun);
+    {ok, Dir} -> foreach_1(Dir, ReturnDtype, SkipInvalid, Fun);
     Error -> Error
   end.
-foreach_1(Dir, SkipInvalid, Fun) ->
-  case readdir(Dir, SkipInvalid) of
+foreach_1(Dir, ReturnDtype, SkipInvalid, Fun) ->
+  case readdir(Dir, ReturnDtype, SkipInvalid) of
     finished -> ok;
-    File ->
-      case Fun(File) of
+    Result ->
+      case Fun(Result) of
         halt -> ok;
-        cont -> foreach_1(Dir, SkipInvalid, Fun)
+        cont -> foreach_1(Dir, ReturnDtype, SkipInvalid, Fun)
       end
   end.
 
@@ -116,27 +145,38 @@ foreach_1(Dir, SkipInvalid, Fun) ->
       AccOut :: term(),
       Reason :: term().
 fold(Path, Fun, AccIn) ->
-  fold(Path, true, Fun, AccIn).
+  fold(Path, false, true, Fun, AccIn).
 
--spec fold(Path, SkipInvalid, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
+-spec fold(Path, ReturnDtype, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
       Path :: dirname(),
+      ReturnDtype :: boolean(),
+      Fun :: fun((F :: filename()) -> {cont, AccOut} | {halt, AccOut}),
+      AccIn :: term(),
+      AccOut :: term(),
+      Reason :: term().
+fold(Path, ReturnDtype, Fun, AccIn) ->
+  fold(Path, ReturnDtype, true, Fun, AccIn).
+
+-spec fold(Path, ReturnDtype, SkipInvalid, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
+      Path :: dirname(),
+      ReturnDtype :: boolean(),
       SkipInvalid :: boolean(),
       Fun :: fun((F :: filename()) -> {cont, AccOut} | {halt, AccOut}),
       AccIn :: term(),
       AccOut :: term(),
       Reason :: term().
-fold(Path, SkipInvalid, Fun, AccIn) ->
+fold(Path, ReturnDtype, SkipInvalid, Fun, AccIn) ->
   case opendir(Path) of
-    {ok, Dir} -> fold_1(Dir, SkipInvalid, Fun, AccIn);
+    {ok, Dir} -> fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccIn);
     Error -> Error
   end.
-fold_1(Dir, SkipInvalid, Fun, AccIn) ->
-  case readdir(Dir, SkipInvalid) of
+fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccIn) ->
+  case readdir(Dir, ReturnDtype, SkipInvalid) of
     finished -> {ok, AccIn};
     File ->
       case Fun(File, AccIn) of
         {halt, AccOut0} -> {ok, AccOut0};
-        {cont, AccOut1} -> fold_1(Dir, SkipInvalid, Fun, AccOut1)
+        {cont, AccOut1} -> fold_1(Dir, ReturnDtype, SkipInvalid, Fun, AccOut1)
       end
   end.
 
