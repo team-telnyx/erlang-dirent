@@ -136,7 +136,7 @@ fold_1(Dir, SkipInvalid, Path, Fun, AccIn) ->
     finished -> {ok, AccIn};
     File ->
       FullName = filename:join(Path, File),
-      case Fun(FullName) of
+      case Fun(FullName, AccIn) of
         {halt, AccOut0} -> {ok, AccOut0};
         {cont, AccOut1} -> fold_1(Dir, SkipInvalid, Path, Fun, AccOut1)
       end
