@@ -97,8 +97,8 @@ Erlang's `file:list_dir/1`, and the behavior depends on the `+fn{u|a}{i|e|w}`
 emulator switches.
 
 For even more advanced usage, there is also `dirent:readdir_all/1` and
-`dirent:readdir_raw/1`. The main different of these latter functions is with
-regards to invalid filenames.
+`dirent:readdir_raw/1`. The main difference of these latter functions is
+regarding to invalid filenames.
 
 `dirent:readdir_all/1` will attempt to translate the filename to a charlist,
 but if not possible, the raw binary will be returned.
