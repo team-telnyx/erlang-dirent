@@ -1,10 +1,13 @@
 -module(dirent).
 
 -export([opendir/1, readdir/1, readdir_type/1, readdir_all/1, readdir_raw/1,
-         controlling_process/2]).
+         controlling_process/2, fold_files/4, fold_files/5]).
+
 -on_load(init/0).
 
 -export_type([dirent/0]).
+
+-include_lib("kernel/include/file.hrl").
 
 -define(APPNAME, dirent).
 -define(LIBNAME, dirent).
@@ -234,6 +237,99 @@ readdir_raw(DirRef) ->
       Pid :: pid().
 controlling_process(DirRef, Pid) ->
   set_controller_nif(DirRef, Pid).
+
+%% @doc Folds function `Fun' over all (regular) files `F' in directory `Path'.
+%% If `Recursive' is `true', all subdirectories to `Path' are processed.
+%%
+%% If Unicode filename translation is in effect and the file system is
+%% transparent, filenames that cannot be interpreted as Unicode will be skipped.
+%%
+%% For more information about raw filenames, see the file module.
+-spec fold_files(Path, Recursive, Fun, AccIn) -> {ok, AccOut} | {error, Reason} when
+      Path :: dirname(),
+      Recursive :: boolean(),
+      Fun :: fun((F, AccIn) -> AccOut),
+      F :: filename() | binary(),
+      AccIn :: term(),
+      AccOut :: term(),
+      Reason :: {no_translation, RawName} | posix_error(),
+      RawName :: binary().
+fold_files(Path, Recursive, Fun, AccIn) when is_binary(Path) or is_list(Path) ->
+  fold_files(Path, Recursive, Fun, AccIn, []).
+
+%% @doc Folds function `Fun' over all files `F' in directory `Path'.  If
+%% `Recursive' is `true', all subdirectories to `Path' are processed.
+%%
+%% If option `all' is passed, then `F' can be any file type, but filenames that
+%% cannot be interpreted as Unicode will be passed as `binary'. If option `raw'
+%% is passed, then `F' can also be any file type, but all filenames will be
+%% `binary'. If no option is passed (`Opts' is an empty list), then it will
+%% behave as `fold_files/4'.
+-spec fold_files(Path, Recursive, Fun, AccIn, Opts) -> {ok, AccOut} | {halted, AccOut} | {error, Reason} when
+      Path :: dirname(),
+      Recursive :: boolean(),
+      Fun :: fun((F, AccIn) -> AccOut | {halt, AccOut}),
+      F :: filename() | binary(),
+      AccIn :: term(),
+      Opts :: list(Opt),
+      Opt :: all | raw,
+      AccOut :: term(),
+      Reason :: {no_translation, RawName} | posix_error(),
+      RawName :: binary().
+fold_files(Path, Recursive, Fun, AccIn, Opts) when is_binary(Path) or is_list(Path) ->
+  case opendir(Path) of
+    {ok, DirRef} -> fold_files_inner(DirRef, Recursive, Fun, AccIn, Opts);
+    {error, Reason} -> {error, Reason}
+  end.
+fold_files_inner(DirRef, Recursive, Fun, AccIn, Opts) when is_reference(DirRef) ->
+  case fold_files_read(DirRef, Opts) of
+    finished -> {ok, AccIn};
+    {error, Reason} -> {error, Reason};
+    {Path, directory} when Recursive =:= true ->
+      fold_files_depth(Path, DirRef, Recursive, Fun, AccIn, Opts);
+    {Path, regular} ->
+      fold_files_breadth(Path, DirRef, Recursive, Fun, AccIn, Opts);
+    {Path, undefined} ->
+      case file:read_file_info(Path) of
+        {ok, #file_info{type=directory}} ->
+          fold_files_depth(Path, DirRef, Recursive, Fun, AccIn, Opts);
+        {ok, _Regular} ->
+          fold_files_breadth(Path, DirRef, Recursive, Fun, AccIn, Opts);
+        {error, Reason} ->
+          {error, Reason}
+      end;
+    {_Path, _Type} when Opts =:= [] ->
+      fold_files_inner(DirRef, Recursive, Fun, AccIn, Opts);
+    {Path, _Type} ->
+      fold_files_breadth(Path, DirRef, Recursive, Fun, AccIn, Opts)
+  end.
+
+fold_files_read(DirRef, []) ->
+  readdir_type(DirRef);
+fold_files_read(DirRef, [all]) ->
+  readdir_all(DirRef);
+fold_files_read(DirRef, [raw]) ->
+  readdir_raw(DirRef);
+fold_files_read(_DirRef, _) ->
+  error(badarg).
+
+fold_files_breadth(Path, DirRef, Recursive, Fun, AccIn, Opts) ->
+  case Fun(Path, AccIn) of
+    {halt, AccOut} ->
+      {halted, AccOut};
+    AccOut ->
+      fold_files_inner(DirRef, Recursive, Fun, AccOut, Opts)
+  end.
+
+fold_files_depth(Path, DirRef, Recursive, Fun, AccIn, Opts) ->
+  case fold_files(Path, Recursive, Fun, AccIn, Opts) of
+    {ok, AccOut} ->
+      fold_files_inner(DirRef, Recursive, Fun, AccOut, Opts);
+    {halted, AccOut} ->
+      {halted, AccOut};
+    {error, Reason} ->
+      {error, Reason}
+  end.
 
 % Private functions
 
